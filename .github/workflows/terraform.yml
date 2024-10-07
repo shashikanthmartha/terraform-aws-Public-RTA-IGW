@@ -1,0 +1,62 @@
+name: Release and Publish Terraform Module
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Read version from VERSION file
+      id: get_version
+      run: echo "::set-output name=version::$(cat VERSION)"
+
+    - name: Extract module name from repository name
+      id: get_module_name
+      run: echo "::set-output name=module_name::$(echo ${GITHUB_REPOSITORY#*/} | sed 's/^terraform-aws-//')"
+
+    - name: Create GitHub Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ steps.get_version.outputs.version }}
+        release_name: Release ${{ steps.get_version.outputs.version }}
+        draft: false
+        prerelease: false
+      continue-on-error: true
+
+    - name: Set up Terraform
+      uses: hashicorp/setup-terraform@v1
+
+    - name: Configure Terraform credentials
+      run: |
+        mkdir -p ~/.terraform.d
+        echo '{"credentials":{"app.terraform.io":{"token":"${{ secrets.TFE_TOKEN }}"}}}' > ~/.terraform.d/credentials.tfrc.json
+
+    - name: Publish Module to Terraform Cloud
+      env:
+        TFE_TOKEN: ${{ secrets.TFE_TOKEN }}
+      run: |
+        curl \
+          --header "Authorization: Bearer ${{ secrets.TFE_TOKEN }}" \
+          --header "Content-Type: application/vnd.api+json" \
+          --request POST \
+          --data '{
+            "data": {
+              "type": "registry-modules",
+              "attributes": {
+                "name": "${{ steps.get_module_name.outputs.module_name }}",
+                "provider": "aws",
+                "version": "${{ steps.get_version.outputs.version }}"
+              }
+            }
+          }' \
+          https://app.terraform.io/api/v2/organizations/shashiorg/registry-modules
